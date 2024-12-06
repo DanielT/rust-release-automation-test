@@ -1,0 +1,63 @@
+name: Release Workflow
+
+on:
+  push:
+    tags:
+      - 'v*' # e.g. v1.0.0
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            target: x86_64-unknown-linux-musl
+            binary: rust-release-automation-test
+          - os: windows
+            target: x86_64-pc-windows-msvc
+            binary: rust-release-automation-test.exe
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Rust
+        run: |
+          rustup default stable
+          rustup update
+          rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: zip
+        run: |
+          cd target/${{ matrix.target }}/release/
+          zip -r rrat-${{ matrix.os }}-${{ github.ref }}.zip ${{ matrix.binary }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-zip
+          path: target/${{ matrix.target }}/release/rrat-${{ matrix.os }}-${{ github.ref }}.zip
+
+  release:
+    needs: build
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build,linux-build
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: ${{ github.ref }}
+          name: Version ${{ github.ref }}
+          body: ${{ github.event.head_commit.message }}
+          draft: true
+          prerelease: false
+          artifacts: windows-zip,linux-zip
+
