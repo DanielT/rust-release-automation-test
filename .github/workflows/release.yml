@@ -21,32 +21,58 @@ jobs:
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             binary: rust-release-automation-test.exe
+    env:
+      ZIP_NAME: rrat-${{ matrix.os }}-${{ github.ref_name }}.zip
 
     steps:
       - uses: actions/checkout@v2
-      - name: Set up Rust
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+          components: llvm-tools-preview
+  
+      - name: Cache Rust artifacts
+        # cache all dependencies to speed up the workflow
+        uses: Swatinem/rust-cache@v2
+  
+      - name: Install cargo-pgo
+        run: cargo install cargo-pgo
+
+      - name: Build instrumented binary
+        # Use `cargo pgo build -- --bin foo` if you have multiple binaries
+        run: cargo pgo build -- --target ${{ matrix.target }}
+
+      - name: Gather PGO profiles
         run: |
-          rustup default stable
-          rustup update
-          rustup target add ${{ matrix.target }}
-      - name: Build
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+          ./target/${{ matrix.target }}/release/${{ matrix.binary }}
+
+      - name: Build optimized binary
+        run: cargo pgo optimize
+
       - name: zip-linux
+        # On linux we use the zip command to create the archive
         if: matrix.os == 'linux'
         run: |
           cd target/${{ matrix.target }}/release/
           zip rrat-${{ matrix.os }}-${{ github.ref_name }}.zip ${{ matrix.binary }}
+
       - name: zip-windows
+        # windows doesn't have the zip copmmand so we use the compress-archive powershell command
         if: matrix.os == 'windows'
         run: |
           cd target/${{ matrix.target }}/release/
-          compress-archive -Path ${{ matrix.binary }} -DestinationPath rrat-${{ matrix.os }}-${{ github.ref_name }}.zip
+          compress-archive -Path ${{ matrix.binary }} -DestinationPath ${{ env.ZIP_NAME }}
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-zip
-          path: target/${{ matrix.target }}/release/rrat-${{ matrix.os }}-${{ github.ref_name }}.zip
+          path: target/${{ matrix.target }}/release/${{ env.ZIP_NAME }}
 
   release:
     name: Create Release
@@ -58,8 +84,8 @@ jobs:
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
-          name:
-          merge-multiple: true
+          name:                # because name is empty, it will download all artifacts
+          merge-multiple: true # merge all artifacts into one directory
       - name: Create Release
         id: create_release
         uses: ncipollo/release-action@v1
